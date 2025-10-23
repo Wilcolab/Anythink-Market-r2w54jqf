@@ -53,9 +53,20 @@ router.get("/", auth.optional, function(req, res, next) {
     query.tagList = { $in: [req.query.tag] };
   }
 
+  const safeSeller =
+    typeof req.query.seller === "string" && req.query.seller.trim()
+      ? req.query.seller.trim()
+      : null;
+  const safeFavorited =
+    typeof req.query.favorited === "string" && req.query.favorited.trim()
+      ? req.query.favorited.trim()
+      : null;
+
   Promise.all([
-    req.query.seller ? User.findOne({ username: req.query.seller }) : null,
-    req.query.favorited ? User.findOne({ username: req.query.favorited }) : null
+    safeSeller ? User.findOne({ username: safeSeller }).select("_id").exec() : null,
+    safeFavorited
+      ? User.findOne({ username: safeFavorited }).select("favorites").exec()
+      : null
   ])
     .then(function(results) {
       var seller = results[0];
@@ -66,8 +77,9 @@ router.get("/", auth.optional, function(req, res, next) {
       }
 
       if (favoriter) {
-        query._id = { $in: favoriter.favorites };
+        query._id = { $in: favoriter.favorites || [] };
       } else if (req.query.favorited) {
+        // If favorited was provided but no such user, ensure no results
         query._id = { $in: [] };
       }
 
@@ -76,20 +88,19 @@ router.get("/", auth.optional, function(req, res, next) {
           .limit(Number(limit))
           .skip(Number(offset))
           .sort({ createdAt: "desc" })
+          .populate("seller")
           .exec(),
-        Item.count(query).exec(),
+        Item.countDocuments(query).exec(),
         req.payload ? User.findById(req.payload.id) : null
-      ]).then(async function(results) {
+      ]).then(function(results) {
         var items = results[0];
         var itemsCount = results[1];
         var user = results[2];
+
         return res.json({
-          items: await Promise.all(
-            items.map(async function(item) {
-              item.seller = await User.findById(item.seller);
-              return item.toJSONFor(user);
-            })
-          ),
+          items: items.map(function(item) {
+            return item.toJSONFor(user);
+          }),
           itemsCount: itemsCount
         });
       });
